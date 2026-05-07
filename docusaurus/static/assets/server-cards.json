@@ -632,6 +632,26 @@
       ]
     },
     {
+      "category": "Developer Tools & Support",
+      "description": "Run automated security code reviews before publishing CRs using AWS Security Agent",
+      "icon": "\ud83d\udee1\ufe0f",
+      "id": "security-agent-mcp-server",
+      "name": "AWS Security Agent MCP Server",
+      "source_path": "src/security-agent-mcp-server/",
+      "subcategory": "Code Security",
+      "tags": [
+        "developer-tools",
+        "security",
+        "code-review",
+        "scanning",
+        "remediation",
+        "agentic"
+      ],
+      "workflows": [
+        "agentic"
+      ]
+    },
+    {
       "category": "Data & Analytics",
       "description": "InfluxDB-compatible operations",
       "icon": "\ud83d\udcca",
