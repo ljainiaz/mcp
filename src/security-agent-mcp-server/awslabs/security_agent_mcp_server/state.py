@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""State persistence — config and scan tracking in ~/.security-agent-mcp/."""
+"""State persistence — config and scan tracking in ~/.securityagent/."""
 
 import json
 from contextlib import contextmanager
@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 
-STATE_DIR = Path.home() / '.security-agent-mcp'
+STATE_DIR = Path.home() / '.securityagent'
 CONFIG_FILE = STATE_DIR / 'config.json'
 SCANS_FILE = STATE_DIR / 'scans.json'
 MAX_SCANS = 50
@@ -65,6 +65,7 @@ class StateManager:
             region_config.update({k: v for k, v in kwargs.items() if v is not None})
             all_config[self._region] = region_config
             CONFIG_FILE.write_text(json.dumps(all_config, indent=2))
+            CONFIG_FILE.chmod(0o600)
 
     def _load_config(self) -> dict:
         """Load full config file."""
@@ -79,6 +80,7 @@ class StateManager:
 
     def _save_scans(self, scans: dict) -> None:
         SCANS_FILE.write_text(json.dumps(scans, indent=2))
+        SCANS_FILE.chmod(0o600)
 
     def save_scan(self, scan_id: str, data: dict) -> None:
         """Save scan state to local storage. Keeps last 50 scans."""

@@ -38,7 +38,8 @@ class SecurityAgentClient:
         """Fresh session each call to pick up rotated credentials."""
         return boto3.Session(region_name=self.region)
 
-    def _call(self, operation: str, body: dict) -> dict:
+    def call(self, operation: str, body: dict) -> dict:
+        """Call a SecurityAgent API operation."""
         url = f'{self.endpoint}/{operation}'
         data = json.dumps(body).encode()
         session = self._get_session()
@@ -55,7 +56,7 @@ class SecurityAgentClient:
             method='POST',
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as e:
             error_body = e.read().decode() if e.fp else ''
@@ -67,12 +68,12 @@ class SecurityAgentClient:
 
     def list_agent_spaces(self) -> list[dict]:
         """List all SecurityAgent agent spaces."""
-        result = self._call('ListAgentSpaces', {})
+        result = self.call('ListAgentSpaces', {})
         return result.get('agentSpaceSummaries', [])
 
     def get_agent_space(self, agent_space_id: str) -> dict:
         """Get details for a specific agent space."""
-        result = self._call('BatchGetAgentSpaces', {'agentSpaceIds': [agent_space_id]})
+        result = self.call('BatchGetAgentSpaces', {'agentSpaceIds': [agent_space_id]})
         spaces = result.get('agentSpaces', [])
         return spaces[0] if spaces else {}
 
@@ -92,7 +93,7 @@ class SecurityAgentClient:
             aws_resources['s3Buckets'] = s3_buckets
         if aws_resources:
             body['awsResources'] = aws_resources
-        return self._call('UpdateAgentSpace', body)
+        return self.call('UpdateAgentSpace', body)
 
     def simulate_role_s3_permissions(self, role_arn: str, bucket_name: str) -> bool:
         """Check if a role has S3 read permissions on a bucket using SimulatePrincipalPolicy."""
@@ -124,10 +125,10 @@ class SecurityAgentClient:
                 body['awsResources']['iamRoles'] = [service_role]
             if s3_bucket:
                 body['awsResources']['s3Buckets'] = [s3_bucket]
-        return self._call('CreateAgentSpace', body)
+        return self.call('CreateAgentSpace', body)
 
     def create_s3_bucket(self, bucket_name: str) -> str:
-        """Create S3 bucket for code uploads."""
+        """Create S3 bucket for code uploads with 7-day lifecycle policy."""
         s3 = self._get_session().client('s3')
         create_args: dict[str, Any] = {'Bucket': bucket_name}
         if self.region != 'us-east-1':
@@ -140,6 +141,19 @@ class SecurityAgentClient:
                 'IgnorePublicAcls': True,
                 'BlockPublicPolicy': True,
                 'RestrictPublicBuckets': True,
+            },
+        )
+        s3.put_bucket_lifecycle_configuration(
+            Bucket=bucket_name,
+            LifecycleConfiguration={
+                'Rules': [
+                    {
+                        'ID': 'AutoDeleteUploads',
+                        'Status': 'Enabled',
+                        'Filter': {'Prefix': ''},
+                        'Expiration': {'Days': 30},
+                    }
+                ]
             },
         )
         return bucket_name
@@ -209,7 +223,7 @@ class SecurityAgentClient:
         code_remediation_strategy: str = 'DISABLED',
     ) -> dict:
         """Create a code review resource."""
-        return self._call(
+        return self.call(
             'CreateCodeReview',
             {
                 'agentSpaceId': agent_space_id,
@@ -222,7 +236,7 @@ class SecurityAgentClient:
 
     def start_code_review_job(self, agent_space_id: str, code_review_id: str) -> dict:
         """Start a code review scan job."""
-        return self._call(
+        return self.call(
             'StartCodeReviewJob',
             {
                 'agentSpaceId': agent_space_id,
@@ -232,7 +246,7 @@ class SecurityAgentClient:
 
     def batch_get_code_review_jobs(self, agent_space_id: str, job_ids: list[str]) -> dict:
         """Get status of code review jobs."""
-        return self._call(
+        return self.call(
             'BatchGetCodeReviewJobs',
             {
                 'agentSpaceId': agent_space_id,
@@ -242,7 +256,7 @@ class SecurityAgentClient:
 
     def stop_code_review_job(self, agent_space_id: str, code_review_job_id: str) -> dict:
         """Stop a running code review job."""
-        return self._call(
+        return self.call(
             'StopCodeReviewJob',
             {
                 'agentSpaceId': agent_space_id,
@@ -255,7 +269,7 @@ class SecurityAgentClient:
         all_findings = []
         body = {'agentSpaceId': agent_space_id, 'codeReviewJobId': code_review_job_id}
         while True:
-            result = self._call('ListFindings', body)
+            result = self.call('ListFindings', body)
             all_findings.extend(result.get('findingsSummaries', []))
             next_token = result.get('nextToken')
             if not next_token:
@@ -265,7 +279,7 @@ class SecurityAgentClient:
 
     def batch_get_findings(self, agent_space_id: str, finding_ids: list[str]) -> dict:
         """Get detailed findings by ID."""
-        return self._call(
+        return self.call(
             'BatchGetFindings',
             {
                 'agentSpaceId': agent_space_id,
@@ -277,11 +291,11 @@ class SecurityAgentClient:
         self, agent_space_id: str, job_id: str, finding_ids: list[str]
     ) -> dict:
         """Start code remediation for findings."""
-        return self._call(
+        return self.call(
             'StartCodeRemediation',
             {
                 'agentSpaceId': agent_space_id,
-                'pentestJobId': job_id,
+                'codeReviewJobId': job_id,
                 'findingIds': finding_ids,
             },
         )
@@ -291,10 +305,11 @@ class SecurityAgentClient:
         from urllib.parse import urlparse
 
         parsed = urlparse(url)
-        if not parsed.hostname or not (parsed.hostname.endswith('.amazonaws.com') or parsed.hostname.endswith('.aws')):
+        host = parsed.hostname or ''
+        if not (host.endswith('.amazonaws.com') or host.endswith('.s3.aws')):
             raise ValueError(f'Refusing to download from non-AWS domain: {parsed.hostname}')
         req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=60) as resp:
             return resp.read().decode('utf-8')
 
     def upload_to_s3(self, bucket: str, key: str, file_path: str) -> str:
@@ -304,7 +319,7 @@ class SecurityAgentClient:
 
     def delete_agent_space(self, agent_space_id: str) -> dict:
         """Delete an agent space."""
-        return self._call('DeleteAgentSpace', {'agentSpaceId': agent_space_id})
+        return self.call('DeleteAgentSpace', {'agentSpaceId': agent_space_id})
 
     def delete_s3_bucket(self, bucket_name: str) -> None:
         """Empty and delete S3 bucket."""

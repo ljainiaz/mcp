@@ -38,7 +38,7 @@ class TestSecurityAgentClientInit:
 
 
 class TestSecurityAgentClientCall:
-    """Tests for _call method."""
+    """Tests for call method."""
 
     @patch('awslabs.security_agent_mcp_server.aws_client.urllib.request.urlopen')
     @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient._get_session')
@@ -57,7 +57,7 @@ class TestSecurityAgentClientCall:
         mock_urlopen.return_value = mock_response
 
         client = SecurityAgentClient(region='us-east-1')
-        result = client._call('TestOp', {'key': 'value'})
+        result = client.call('TestOp', {'key': 'value'})
         assert result == {'result': 'ok'}
 
     @patch('awslabs.security_agent_mcp_server.aws_client.urllib.request.urlopen')
@@ -77,7 +77,7 @@ class TestSecurityAgentClientCall:
 
         client = SecurityAgentClient(region='us-east-1')
         with pytest.raises(RuntimeError, match='TestOp failed'):
-            client._call('TestOp', {})
+            client.call('TestOp', {})
 
 
 class TestSecurityAgentClientMethods:
@@ -92,7 +92,7 @@ class TestSecurityAgentClientMethods:
         client = SecurityAgentClient(region='us-east-1')
         assert client.get_caller_identity()['Account'] == '123456789012'
 
-    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient._call')
+    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient.call')
     def test_list_agent_spaces(self, mock_call):
         """Lists agent spaces."""
         mock_call.return_value = {'agentSpaceSummaries': [{'agentSpaceId': 'as-1'}]}
@@ -101,7 +101,7 @@ class TestSecurityAgentClientMethods:
         assert len(result) == 1
         mock_call.assert_called_once_with('ListAgentSpaces', {})
 
-    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient._call')
+    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient.call')
     def test_get_agent_space(self, mock_call):
         """Gets agent space details."""
         mock_call.return_value = {'agentSpaces': [{'agentSpaceId': 'as-1', 'name': 'test'}]}
@@ -109,14 +109,14 @@ class TestSecurityAgentClientMethods:
         result = client.get_agent_space('as-1')
         assert result['name'] == 'test'
 
-    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient._call')
+    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient.call')
     def test_get_agent_space_empty(self, mock_call):
         """Returns empty dict when space not found."""
         mock_call.return_value = {'agentSpaces': []}
         client = SecurityAgentClient(region='us-east-1')
         assert client.get_agent_space('as-nope') == {}
 
-    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient._call')
+    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient.call')
     def test_update_agent_space(self, mock_call):
         """Updates agent space."""
         mock_call.return_value = {}
@@ -160,7 +160,7 @@ class TestSecurityAgentClientMethods:
         client = SecurityAgentClient(region='us-east-1')
         assert client.simulate_role_s3_permissions('arn', 'bucket') is False
 
-    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient._call')
+    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient.call')
     def test_create_agent_space(self, mock_call):
         """Creates agent space with resources."""
         mock_call.return_value = {'agentSpaceId': 'as-new'}
@@ -201,7 +201,7 @@ class TestSecurityAgentClientMethods:
         mock_iam.create_role.assert_called_once()
         mock_iam.put_role_policy.assert_called_once()
 
-    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient._call')
+    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient.call')
     def test_create_code_review(self, mock_call):
         """Creates code review."""
         mock_call.return_value = {'codeReviewId': 'cr-1'}
@@ -209,7 +209,7 @@ class TestSecurityAgentClientMethods:
         result = client.create_code_review('as-1', 'title', 'role', 's3://b/k.zip')
         assert result['codeReviewId'] == 'cr-1'
 
-    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient._call')
+    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient.call')
     def test_start_code_review_job(self, mock_call):
         """Starts code review job."""
         mock_call.return_value = {'codeReviewJobId': 'cj-1'}
@@ -217,7 +217,7 @@ class TestSecurityAgentClientMethods:
         result = client.start_code_review_job('as-1', 'cr-1')
         assert result['codeReviewJobId'] == 'cj-1'
 
-    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient._call')
+    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient.call')
     def test_batch_get_code_review_jobs(self, mock_call):
         """Gets code review job status."""
         mock_call.return_value = {'codeReviewJobs': [{'status': 'COMPLETED'}]}
@@ -225,7 +225,7 @@ class TestSecurityAgentClientMethods:
         result = client.batch_get_code_review_jobs('as-1', ['cj-1'])
         assert result['codeReviewJobs'][0]['status'] == 'COMPLETED'
 
-    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient._call')
+    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient.call')
     def test_list_findings(self, mock_call):
         """Lists findings."""
         mock_call.return_value = {'findingsSummaries': [{'findingId': 'f-1'}]}
@@ -253,7 +253,7 @@ class TestSecurityAgentClientMethods:
         client = SecurityAgentClient(region='us-east-1')
         assert client.download_url('https://my-bucket.s3.amazonaws.com/diff.patch') == 'diff content'
 
-    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient._call')
+    @patch('awslabs.security_agent_mcp_server.aws_client.SecurityAgentClient.call')
     def test_delete_agent_space(self, mock_call):
         """Deletes agent space."""
         mock_call.return_value = {}

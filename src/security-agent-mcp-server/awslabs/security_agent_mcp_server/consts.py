@@ -21,35 +21,48 @@ DEFAULT_REGION = 'us-east-1'
 SERVER_INSTRUCTIONS = """
 # AWS Security Agent MCP Server
 
-This MCP server enables automated security code review scanning before publishing code reviews.
+Comprehensive MCP server for AWS Security Agent — security scanning, penetration testing, and remediation.
 
 ## Available Tools
 
-### Setup (one-time)
-- `setup_check` — Verify prerequisites (credentials, agent space, role, bucket)
-- `setup` — Auto-provision or reuse resources (agent space, S3 bucket, IAM role)
+### Setup
+- `setup_check` — Verify prerequisites (credentials, agent space, role)
+- `setup` — Create/reuse agent space and IAM service role
 
-### Scanning
-- `start_security_scan` — Package code, upload, start scan. Returns immediately with scan_id.
-- `get_scan_status` — Check a previous scan's status (for session recovery)
-- `get_scan_findings` — Get findings from a previously completed scan
-- `list_scans` — List all tracked scans
+### Code Review (orchestrated)
+- `start_security_scan` — Zip code, upload to S3, create code review, start scan. Returns scan_id.
+- `get_scan_status` — Poll scan progress
+- `get_scan_findings` — Get vulnerabilities found
+- `list_scans` — List tracked scans
 - `stop_scan` — Cancel a running scan
 
 ### Remediation
-- `start_remediation` — Generate code fixes for specific findings
-- `get_remediation_diff` — Download generated fix diffs
+- `start_remediation` — Generate code fixes for findings
+- `get_remediation_diff` — Download fix diffs to apply locally
 
-## Workflow
-1. Call `setup_check` to verify readiness
-2. If not ready, call `setup` to provision resources
-3. Call `start_security_scan(path=".")` — returns immediately with scan_id
-4. Poll with `get_scan_status` until complete
-5. Call `get_scan_findings` to retrieve results
-6. Use `start_remediation` + `get_remediation_diff` to apply auto-generated fixes
+### Full API Access
+- `call_api` — Call ANY SecurityAgent API operation (pentests, target domains, integrations, artifacts, etc.)
+- `get_api_guide` — List all available operations with docs link
 
-## Important
-- Scans take 15-30 minutes. Use `get_scan_status` to poll for completion.
-- Always use `start_remediation`/`get_remediation_diff` for fixes — never edit code manually.
-- Remediation mode AUTOMATIC generates fixes automatically during scan.
+## Workflows
+
+### Code Review (source scan)
+1. `setup_check` → `setup` (one-time)
+2. `start_security_scan(path=".")` → returns scan_id
+3. Poll with `get_scan_status` until COMPLETED
+4. `get_scan_findings` → view results
+5. `get_remediation_diff` → download fixes
+
+### Penetration Test
+1. `setup_check` → `setup` (one-time)
+2. `call_api("CreateTargetDomain", {agentSpaceId, domain})` → register target
+3. `call_api("VerifyTargetDomain", {agentSpaceId, targetDomainId})` → verify ownership
+4. `call_api("CreatePentest", {agentSpaceId, title, assets: {endpoints: [...]}})` → create pentest
+5. `call_api("StartPentestJob", {agentSpaceId, pentestId})` → start
+6. Poll with `call_api("BatchGetPentestJobs", ...)` until COMPLETED
+7. `call_api("ListFindings", {agentSpaceId, codeReviewJobId})` → results
+
+### Any Other Operation
+1. `get_api_guide` → see all available operations
+2. `call_api(operation, params)` → execute
 """

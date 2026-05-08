@@ -57,17 +57,15 @@ class TestIntegSetupFlow:
 
         # 2. setup creates everything
         mock_client.list_agent_spaces.return_value = []
-        mock_client.create_s3_bucket.return_value = 'security-agent-scans-123456789012-us-east-1'
         mock_client.create_service_role.return_value = (
             'arn:aws:iam::123456789012:role/SecurityAgentScanRole'
         )
         mock_client.create_agent_space.return_value = {'agentSpaceId': 'as-new-space-id'}
         mock_state.update_config = MagicMock()
 
-        result = await setup(mock_context, name='my-scans', agent_space_id=None, use_existing_role=None)
+        result = await setup(mock_context, name='my-scans', agent_space_id=None, service_role_arn=None)
         assert 'ready' in result
         assert 'as-new-space-id' in result
-        mock_client.create_s3_bucket.assert_called_once()
         mock_client.create_service_role.assert_called_once()
         mock_client.create_agent_space.assert_called_once()
 
@@ -86,17 +84,14 @@ class TestIntegSetupFlow:
                 's3Buckets': ['existing-bucket'],
             },
         }
-        mock_client.simulate_role_s3_permissions.return_value = True
-        mock_client.create_s3_bucket.return_value = 'bucket'
         mock_client.update_agent_space.return_value = {}
         mock_state.get_config.return_value = {}
         mock_state.update_config = MagicMock()
 
         result = await setup(
-            mock_context, name='test', agent_space_id='as-existing', use_existing_role=True
+            mock_context, name=None, agent_space_id='as-existing', service_role_arn='arn:aws:iam::123456789012:role/ExistingRole'
         )
         assert 'ready' in result
-        mock_client.simulate_role_s3_permissions.assert_called_once()
 
 
 class TestIntegScanFlow:

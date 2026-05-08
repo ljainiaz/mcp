@@ -3,18 +3,18 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-yellow.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-An AWS Labs Model Context Protocol (MCP) server for **AWS Security Agent** — run automated security code reviews before publishing CRs.
+An AWS Labs Model Context Protocol (MCP) server for **AWS Security Agent** — automated security scanning, penetration testing, and remediation.
 
-This MCP server enables developers to scan source code for security vulnerabilities directly from their IDE using Amazon Security Agent's CodeScannerAgent. It packages local code, uploads to S3, triggers a scan, and returns findings with auto-generated fixes.
+This MCP server provides full access to the AWS Security Agent service, enabling developers to scan source code for vulnerabilities, run penetration tests against live applications, manage integrations, and apply auto-generated fixes — all from any MCP-compatible client.
 
 ## Features
 
-- **One-command security scanning** — zip, upload, start scan, returns immediately with scan_id
-- **Auto-provisioning** — creates agent space, S3 bucket, and IAM service role on first use
-- **Reuse existing resources** — detects and validates existing agent spaces and roles
+- **Code security scanning** — zip, upload, scan source code, get findings with fixes
+- **Penetration testing** — test live applications via target domains
+- **Full API access** — `call_api` tool exposes all SecurityAgent operations
+- **Auto-provisioning** — creates agent space and IAM service role on first use
 - **Code remediation** — auto-generates fixes for vulnerabilities, returns diffs
-- **Progress reporting** — MCP progress notifications during scan execution
-- **Respects .gitignore** — only packages tracked files
+- **Respects .gitignore** — excludes ignored files from packaging
 
 ## Prerequisites
 
@@ -72,78 +72,105 @@ This MCP server enables developers to scan source code for security vulnerabilit
 
 ### Available Regions
 
-AWS Security Agent is available in: `us-east-1`, `us-west-2`, `eu-west-1`, `eu-central-1`, `ap-southeast-2`, `ap-northeast-1`.
-
-To change the region, edit `AWS_REGION` in your MCP configuration:
-
-```json
-"env": {
-  "AWS_REGION": "us-west-2"
-}
-```
+See [AWS documentation](https://docs.aws.amazon.com/securityagent/latest/userguide/resilience.html) for available regions.
 
 ## Available Tools
 
-### Setup (one-time)
+### Setup
 
 | Tool | Description |
 |------|-------------|
-| `setup_check` | Verify prerequisites — credentials, agent space, role, bucket |
-| `setup` | Auto-provision or reuse resources with interactive flow |
+| `setup_check` | Verify prerequisites — credentials, agent space, role |
+| `setup` | Create/reuse agent space and IAM service role |
 
-### Scanning
+### Code Review (orchestrated)
 
 | Tool | Description |
 |------|-------------|
-| `start_security_scan` | Package code, upload, start scan. **Returns immediately.** |
-| `get_scan_status` | Check status of a previous scan (session recovery) |
-| `get_scan_findings` | Get findings from a previously completed scan |
-| `list_scans` | List all tracked scans |
+| `start_security_scan` | Zip code, upload to S3, create review, start scan. Returns scan_id. |
+| `get_scan_status` | Poll scan progress |
+| `get_scan_findings` | Get findings from completed scan |
+| `list_scans` | List tracked scans |
 | `stop_scan` | Cancel a running scan |
 
 ### Remediation
 
 | Tool | Description |
 |------|-------------|
-| `start_remediation` | Generate code fixes for specific finding IDs |
-| `get_remediation_diff` | Download generated fix diffs to apply locally |
+| `start_remediation` | Generate code fixes for findings |
+| `get_remediation_diff` | Download fix diffs to apply locally |
 
-## Usage Flow
+### Full API Access
+
+| Tool | Description |
+|------|-------------|
+| `call_api` | Call any SecurityAgent API operation (pentests, target domains, integrations, artifacts, etc.) |
+| `get_api_guide` | List all available operations dynamically + documentation link |
+
+## Usage Flows
+
+### Code Review (source scan)
 
 ```
 1. setup_check()              → verify readiness
-2. setup()                    → provision resources (interactive, one-time)
-3. start_security_scan(       → returns immediately with scan_id
-     path=".",
-     remediation="AUTOMATIC"
-   )
-4. get_scan_status()          → poll until COMPLETED (15-30 min)
+2. setup()                    → provision resources (one-time)
+3. start_security_scan(path=".", remediation="AUTOMATIC")
+4. get_scan_status()          → poll until COMPLETED
 5. get_scan_findings()        → retrieve findings
-6. get_remediation_diff()     → download auto-generated code fixes
-7. Apply diffs locally
+6. get_remediation_diff()     → download code fixes
+```
+
+### Penetration Test
+
+```
+1. setup_check() → setup()   → one-time
+2. call_api("CreateTargetDomain", {agentSpaceId, domain})
+3. call_api("VerifyTargetDomain", {agentSpaceId, targetDomainId})
+4. call_api("CreatePentest", {agentSpaceId, title, assets: {endpoints: [...]}})
+5. call_api("StartPentestJob", {agentSpaceId, pentestId})
+6. Poll: call_api("BatchGetPentestJobs", {agentSpaceId, pentestJobIds})
+7. call_api("ListFindings", {agentSpaceId, codeReviewJobId})
+```
+
+### Any Operation
+
+```
+1. get_api_guide()            → see all operations + docs link
+2. call_api(operation, params) → execute
 ```
 
 ## Required IAM Permissions
 
-### For setup (one-time)
-- `iam:CreateRole`, `iam:PutRolePolicy`
-- `s3:CreateBucket`, `s3:PutPublicAccessBlock`
-- `securityagent:CreateAgentSpace`, `securityagent:UpdateAgentSpace`
-- `securityagent:ListAgentSpaces`, `securityagent:GetAgentSpace`
-- `iam:SimulatePrincipalPolicy`
+These permissions are needed on **your AWS credentials** (the identity running the MCP server):
 
-### For scanning (ongoing)
-- `securityagent:CreateCodeReview`, `securityagent:StartCodeReviewJob`
-- `securityagent:BatchGetCodeReviewJobs`, `securityagent:ListFindings`
-- `securityagent:BatchGetFindings`, `securityagent:StartCodeRemediation`
+### For setup (one-time)
+- `iam:CreateRole`, `iam:PutRolePolicy` (if creating a new service role)
+- `s3:CreateBucket`, `s3:PutPublicAccessBlock`, `s3:PutLifecycleConfiguration` (if creating a new bucket)
+- `sts:GetCallerIdentity`
+- `securityagent:CreateAgentSpace`, `securityagent:UpdateAgentSpace`
+- `securityagent:ListAgentSpaces`, `securityagent:BatchGetAgentSpaces`
+
+### For code scanning
 - `s3:PutObject`
+- `securityagent:CreateCodeReview`, `securityagent:StartCodeReviewJob`
+- `securityagent:BatchGetCodeReviewJobs`, `securityagent:StopCodeReviewJob`
+- `securityagent:ListFindings`, `securityagent:BatchGetFindings`
+- `securityagent:StartCodeRemediation`, `securityagent:BatchDeleteCodeReviews`
+
+### For pentesting and other operations
+
+Add SecurityAgent permissions as needed for your use case. See [How AWS Security Agent works with IAM](https://docs.aws.amazon.com/securityagent/latest/userguide/security_iam_service-with-iam.html) for details on available actions.
 
 ## Service Role
 
-The server creates an IAM role `SecurityAgentScanRole` with:
+During setup, the server creates an IAM service role `SecurityAgentScanRole` (if one doesn't already exist). If an existing role is found on the agent space, it can be reused after validating its permissions.
+
+The service role is assumed by the SecurityAgent service to read your uploaded code:
 
 - **Trust policy**: `securityagent.amazonaws.com` service principal
 - **Permissions**: S3 read on scan bucket, CloudWatch Logs write
+
+> **Note**: An S3 bucket is used to temporarily store source code for scanning. The MCP server sets a 30-day lifecycle policy on buckets it creates — uploaded content is automatically deleted. If you use your own bucket, consider adding a lifecycle rule to manage storage costs.
 
 ## Contributing
 

@@ -53,8 +53,8 @@ _scanner = Scanner(client=_client, state=_state)
 async def setup_check(ctx: Context) -> str:
     """Check if AWS Security Agent prerequisites are configured.
 
-    Verifies that agent space, service role, S3 bucket, and AWS credentials are available.
-    Call this before starting a scan to ensure everything is ready.
+    Verifies agent space and service role are available.
+    If not ready, lists existing agent spaces to help with setup.
     """
     try:
         config = _state.get_config()
@@ -64,15 +64,25 @@ async def setup_check(ctx: Context) -> str:
             missing.append('agent_space_id')
         if not config.get('service_role'):
             missing.append('service_role')
-        if not config.get('s3_bucket'):
-            missing.append('s3_bucket')
 
         try:
             _client.get_caller_identity()
         except Exception as e:
             missing.append(f'aws_credentials ({e})')
 
-        result = {'ready': len(missing) == 0, 'missing': missing, 'config': config}
+        result: dict = {'ready': len(missing) == 0, 'missing': missing, 'config': config}
+
+        # If not ready, list existing spaces to help user decide
+        if not result['ready'] and 'aws_credentials' not in str(missing):
+            try:
+                spaces = _client.list_agent_spaces()
+                if spaces:
+                    result['existing_agent_spaces'] = [
+                        {'id': s.get('agentSpaceId'), 'name': s.get('name')} for s in spaces
+                    ]
+            except Exception:
+                pass
+
         logger.info(f'Setup check: ready={result["ready"]}')
         return json.dumps(result)
     except Exception as e:
@@ -84,141 +94,80 @@ async def setup_check(ctx: Context) -> str:
 @mcp.tool()
 async def setup(
     ctx: Context,
-    name: str = Field(
-        default='security-scans',
-        description='Name for the agent space if creating a new one.',
+    name: Optional[str] = Field(
+        default=None,
+        description='Name for new agent space. If not provided and no agent_space_id, defaults to "security-scans".',
     ),
     agent_space_id: Optional[str] = Field(
         default=None,
-        description='Existing agent space ID to use. If not provided, lists existing spaces or creates new.',
+        description='Existing agent space ID to use. Omit to create new.',
     ),
-    use_existing_role: Optional[bool] = Field(
+    service_role_arn: Optional[str] = Field(
         default=None,
-        description='Whether to use an existing IAM role on the agent space. None=ask, True=validate and use, False=create new.',
+        description='Existing IAM service role ARN. Omit to create a minimal role automatically.',
     ),
 ) -> str:
-    """One-time setup: provision or reuse agent space, S3 bucket, and IAM service role.
+    """One-time setup: provision or reuse agent space and IAM service role.
 
-    ## Workflow
-    1. If no agent_space_id: lists existing spaces for user selection, or creates new
-    2. Creates S3 bucket for code uploads if needed
-    3. Creates or validates IAM service role with SecurityAgent trust policy
-    4. Registers role and bucket on the agent space
+    IMPORTANT: Before calling, ask the user:
+    1. "Do you have an existing agent space, or should I create a new one?"
+       (setup_check returns existing_agent_spaces if any exist — show them)
+    2. "Do you have an existing IAM service role, or should I create one?"
+       If using an existing role, it MUST have a trust policy allowing securityagent.amazonaws.com to assume it.
+       For pentesting AWS resources, the role needs broader permissions (ec2:Describe*, iam:Get*).
+       For code scanning only, a minimal role with S3 read is sufficient.
+       See: https://docs.aws.amazon.com/securityagent/latest/userguide/create-iam-role.html
 
-    ## Multi-step
-    This tool may return intermediate status requiring user input:
-    - `needs_agent_space_selection`: existing spaces found, pick one or create new
-    - `needs_role_selection`: existing role found on space, use it or create new
-    - `role_missing_permissions`: selected role lacks required S3 permissions
+    Then call with the appropriate params:
+    - New space + new role: setup(name='my-space')
+    - New space + existing role: setup(name='my-space', service_role_arn='arn:...')
+    - Existing space + new role: setup(agent_space_id='as-xxx')
+    - Existing space + existing role: setup(agent_space_id='as-xxx', service_role_arn='arn:...')
     """
     try:
         identity = _client.get_caller_identity()
         account_id = identity['Account']
         config = _state.get_config()
 
-        # 1. Resolve agent space
+        # Resolve service role
+        service_role = config.get('service_role')
+        if not service_role:
+            if service_role_arn:
+                service_role = service_role_arn
+            else:
+                role_name = 'SecurityAgentScanRole'
+                try:
+                    service_role = _client.create_service_role(role_name, account_id, '')
+                    logger.info(f'Created service role: {service_role}')
+                except Exception as e:
+                    if (
+                        hasattr(e, 'response')
+                        and e.response.get('Error', {}).get('Code') == 'EntityAlreadyExists'
+                    ):
+                        service_role = f'arn:aws:iam::{account_id}:role/{role_name}'
+                    else:
+                        raise
+            _state.update_config(service_role=service_role)
+
+        # Resolve agent space
         if not agent_space_id:
             agent_space_id = config.get('agent_space_id')
 
         if not agent_space_id:
-            spaces = _client.list_agent_spaces()
-            if spaces and name == 'security-scans':
-                return json.dumps(
-                    {
-                        'status': 'needs_agent_space_selection',
-                        'message': 'Found existing agent spaces. Pick one or create new.',
-                        'spaces': [
-                            {'id': s.get('agentSpaceId'), 'name': s.get('name')} for s in spaces
-                        ],
-                        'hint': "Call setup(agent_space_id='...') with your choice, or setup(name='my-new-space') to create new.",
-                    }
-                )
-
-        # 2. Create S3 bucket if needed
-        s3_bucket = config.get('s3_bucket')
-        if not s3_bucket:
-            s3_bucket = f'security-agent-scans-{account_id}-{_region}'
-            try:
-                _client.create_s3_bucket(s3_bucket)
-                logger.info(f'Created S3 bucket: {s3_bucket}')
-            except Exception as e:
-                if 'BucketAlreadyOwnedByYou' not in str(e):
-                    raise
-            _state.update_config(s3_bucket=s3_bucket)
-
-        # 3. Resolve service role
-        service_role = config.get('service_role')
-        space_details = None
-        if not service_role:
-            if agent_space_id:
-                space_details = _client.get_agent_space(agent_space_id)
-                existing_roles = space_details.get('awsResources', {}).get('iamRoles', [])
-
-                if existing_roles and use_existing_role is None:
-                    return json.dumps(
-                        {
-                            'status': 'needs_role_selection',
-                            'agent_space_id': agent_space_id,
-                            'existing_roles': existing_roles,
-                            'message': 'This agent space has existing role(s). Use existing or create new?',
-                            'hint': "Call setup(agent_space_id='...', use_existing_role=True) or setup(agent_space_id='...', use_existing_role=False)",
-                        }
-                    )
-
-                if use_existing_role and existing_roles:
-                    candidate_role = existing_roles[0]
-                    has_s3 = _client.simulate_role_s3_permissions(candidate_role, s3_bucket)
-                    if has_s3:
-                        service_role = candidate_role
-                        _state.update_config(service_role=service_role)
-                    else:
-                        return json.dumps(
-                            {
-                                'status': 'role_missing_permissions',
-                                'role': candidate_role,
-                                'message': f"Role lacks S3 permissions on '{s3_bucket}'.",
-                                'hint': "Call setup(agent_space_id='...', use_existing_role=False) to create new.",
-                            }
-                        )
-
-            if not service_role:
-                role_name = 'SecurityAgentScanRole'
-                try:
-                    service_role = _client.create_service_role(role_name, account_id, s3_bucket)
-                    logger.info(f'Created service role: {service_role}')
-                except Exception as e:
-                    if 'EntityAlreadyExists' in str(e):
-                        service_role = f'arn:aws:iam::{account_id}:role/{role_name}'
-                    else:
-                        raise
-                _state.update_config(service_role=service_role)
-
-        # 4. Create or update agent space
-        if not agent_space_id:
             result = _client.create_agent_space(
-                name=name, service_role=service_role, s3_bucket=s3_bucket
+                name=name or 'security-scans', service_role=service_role
             )
             agent_space_id = result['agentSpaceId']
             logger.info(f'Created agent space: {agent_space_id}')
         else:
-            if not space_details:
-                space_details = _client.get_agent_space(agent_space_id)
-            space_name = space_details.get('name', name)
+            # Ensure role is registered on existing space
+            space_details = _client.get_agent_space(agent_space_id)
+            space_name = space_details.get('name', name or 'security-scans')
             existing_roles = space_details.get('awsResources', {}).get('iamRoles', [])
-            existing_buckets = space_details.get('awsResources', {}).get('s3Buckets', [])
 
-            needs_update = False
             if service_role not in existing_roles:
                 existing_roles.append(service_role)
-                needs_update = True
-            if s3_bucket not in existing_buckets:
-                existing_buckets.append(s3_bucket)
-                needs_update = True
-
-            if needs_update:
-                _client.update_agent_space(
-                    agent_space_id, space_name, existing_roles, existing_buckets
-                )
+                _client.update_agent_space(agent_space_id, space_name, existing_roles, None)
 
         _state.update_config(agent_space_id=agent_space_id)
 
@@ -226,7 +175,6 @@ async def setup(
             {
                 'status': 'ready',
                 'agent_space_id': agent_space_id,
-                's3_bucket': s3_bucket,
                 'service_role': service_role,
                 'account_id': account_id,
             }
@@ -261,12 +209,22 @@ async def start_security_scan(
     """
     try:
         config = _state.get_config()
-        if (
-            not config.get('agent_space_id')
-            or not config.get('service_role')
-            or not config.get('s3_bucket')
-        ):
-            return json.dumps({'error': 'Not configured. Run setup_check first.'})
+        if not config.get('agent_space_id') or not config.get('service_role'):
+            return json.dumps({'error': 'Not configured. Run setup first.'})
+
+        # Lazy S3 bucket creation on first scan
+        if not config.get('s3_bucket'):
+            identity = _client.get_caller_identity()
+            account_id = identity['Account']
+            s3_bucket = f'security-agent-scans-{account_id}-{_region}'
+            try:
+                _client.create_s3_bucket(s3_bucket)
+            except Exception as e:
+                if hasattr(e, 'response') and e.response.get('Error', {}).get('Code') == 'BucketAlreadyOwnedByYou':
+                    pass
+                else:
+                    raise
+            _state.update_config(s3_bucket=s3_bucket)
 
         logger.info(f'Starting security scan on path: {path}')
         result = await _scanner.start_scan(path=path, title=title, remediation=remediation)
@@ -367,7 +325,9 @@ async def start_remediation(
     """
     try:
         logger.info(f'Starting remediation for scan={scan_id}, findings={finding_ids}')
-        return json.dumps(await _scanner.start_remediation(scan_id=scan_id, finding_ids=finding_ids))
+        return json.dumps(
+            await _scanner.start_remediation(scan_id=scan_id, finding_ids=finding_ids)
+        )
     except Exception as e:
         logger.error(f'Error in start_remediation: {e}')
         await ctx.error(f'Error starting remediation: {e}')
@@ -392,11 +352,80 @@ async def get_remediation_diff(
     The diff is generated by the SecurityAgent based on the vulnerability context.
     """
     try:
-        return json.dumps(await _scanner.get_remediation_diff(scan_id=scan_id, finding_id=finding_id))
+        return json.dumps(
+            await _scanner.get_remediation_diff(scan_id=scan_id, finding_id=finding_id)
+        )
     except Exception as e:
         logger.error(f'Error in get_remediation_diff: {e}')
         await ctx.error(f'Error getting remediation diff: {e}')
         raise
+
+
+@mcp.tool()
+async def call_api(
+    ctx: Context,
+    operation: str = Field(
+        ...,
+        description='SecurityAgent API operation name (e.g., CreatePentest, ListTargetDomains). Call get_api_guide for available operations.',
+    ),
+    params: dict = Field(
+        default_factory=dict,
+        description='Operation parameters as JSON object.',
+    ),
+) -> str:
+    """Call any AWS Security Agent API operation directly.
+
+    Use get_api_guide to discover available operations and their parameters.
+    """
+    try:
+        import re
+
+        if not re.match(r'^[A-Za-z]+$', operation):
+            return json.dumps({'error': f'Invalid operation name: {operation}'})
+        logger.info(f'call_api: {operation}')
+        result = _client.call(operation, params)
+        return json.dumps(result)
+    except Exception as e:
+        logger.error(f'Error in call_api ({operation}): {e}')
+        await ctx.error(f'{operation} failed: {e}')
+        raise
+
+
+_cached_operations = None
+
+
+@mcp.tool()
+async def get_api_guide(ctx: Context) -> str:
+    """Get all available SecurityAgent API operations.
+
+    Returns operation names dynamically from the service model,
+    plus a link to full API documentation with parameter details.
+    """
+    global _cached_operations
+    if _cached_operations is None:
+        try:
+            import boto3
+
+            session = boto3.Session(region_name=_region)
+            client = session.client('securityagent')
+            _cached_operations = sorted(client.meta.service_model.operation_names)
+        except Exception:
+            _cached_operations = ['(Could not load service model — use documentation link)']
+
+    return json.dumps(
+        {
+            'documentation': 'https://docs.aws.amazon.com/securityagent/latest/APIReference/API_Operations.html',
+            'operations': _cached_operations,
+            'usage': 'Call call_api(operation="OperationName", params={...}). See documentation link for parameter details.',
+            'examples': {
+                'ListAgentSpaces': {},
+                'CreatePentest': {'agentSpaceId': '...', 'title': '...'},
+                'StartPentestJob': {'agentSpaceId': '...', 'pentestId': '...'},
+                'ListFindings': {'agentSpaceId': '...', 'codeReviewJobId': '...'},
+                'CreateTargetDomain': {'agentSpaceId': '...', 'domain': 'https://...'},
+            },
+        }
+    )
 
 
 def main():

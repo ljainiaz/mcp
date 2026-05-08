@@ -1,5 +1,4 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,7 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 
-MAX_ZIP_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_ZIP_SIZE = 512 * 1024 * 1024  # 512MB
 
 EXCLUDE_DIRS = {
     '.git',
@@ -78,7 +77,9 @@ class Scanner:
         zip_size = os.path.getsize(zip_path)
         if zip_size > MAX_ZIP_SIZE:
             os.unlink(zip_path)
-            return {'error': f'Code too large ({zip_size // 1024 // 1024}MB). Max 50MB.'}
+            return {
+                'error': f'Code too large ({zip_size // 1024 // 1024}MB). Max {MAX_ZIP_SIZE // 1024 // 1024}MB.'
+            }
 
         # 2. Upload to S3
         try:
@@ -163,7 +164,9 @@ class Scanner:
             'steps': job.get('steps', []),
         }
 
-    async def get_findings(self, scan_id: Optional[str] = None, severity: Optional[str] = None) -> dict:
+    async def get_findings(
+        self, scan_id: Optional[str] = None, severity: Optional[str] = None
+    ) -> dict:
         """Get findings from a completed scan."""
         scan = self._state.get_scan(scan_id)
         if not scan:
@@ -213,7 +216,9 @@ class Scanner:
         self._state.save_scan(scan['scan_id'], scan)
         return {'scan_id': scan['scan_id'], 'status': 'STOPPED'}
 
-    async def start_remediation(self, scan_id: Optional[str] = None, finding_ids: Optional[list[str]] = None) -> dict:
+    async def start_remediation(
+        self, scan_id: Optional[str] = None, finding_ids: Optional[list[str]] = None
+    ) -> dict:
         """Start code remediation for specific findings."""
         scan = self._state.get_scan(scan_id)
         if not scan:
@@ -244,7 +249,9 @@ class Scanner:
             'message': 'Code remediation started. Poll with get_remediation_diff to get fixes when ready.',
         }
 
-    async def get_remediation_diff(self, scan_id: Optional[str] = None, finding_id: Optional[str] = None) -> dict:
+    async def get_remediation_diff(
+        self, scan_id: Optional[str] = None, finding_id: Optional[str] = None
+    ) -> dict:
         """Download remediation diffs for findings."""
         scan = self._state.get_scan(scan_id)
         if not scan:
@@ -324,6 +331,8 @@ class Scanner:
 
     def _zip_code(self, path: str) -> str:
         root = Path(path).resolve()
+        if not root.is_dir():
+            raise ValueError(f'Path does not exist or is not a directory: {root}')
         gitignore_path = root / '.gitignore'
         matches = (
             gitignorefile.parse(str(gitignore_path))
@@ -332,17 +341,20 @@ class Scanner:
         )
 
         tmp = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
-        with zipfile.ZipFile(tmp.name, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for dirpath, dirnames, filenames in os.walk(root):
-                # Skip always-excluded dirs
-                dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
-                for filename in filenames:
-                    filepath = Path(dirpath) / filename
-                    if filepath.is_symlink():
-                        continue
-                    rel_path = filepath.relative_to(root)
-                    if not matches(str(filepath)) and not any(
-                        filepath.match(p) for p in EXCLUDE_FILES
-                    ) and filename not in EXCLUDE_FILES:
-                        zf.write(filepath, rel_path)
+        try:
+            with zipfile.ZipFile(tmp.name, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for dirpath, dirnames, filenames in os.walk(root):
+                    dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+                    for filename in filenames:
+                        filepath = Path(dirpath) / filename
+                        if filepath.is_symlink():
+                            continue
+                        rel_path = filepath.relative_to(root)
+                        if not matches(str(filepath)) and not any(
+                            filepath.match(p) for p in EXCLUDE_FILES
+                        ):
+                            zf.write(filepath, rel_path)
+        except Exception:
+            os.unlink(tmp.name)
+            raise
         return tmp.name
