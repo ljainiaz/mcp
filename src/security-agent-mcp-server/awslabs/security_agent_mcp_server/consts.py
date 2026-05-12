@@ -21,7 +21,7 @@ DEFAULT_REGION = 'us-east-1'
 SERVER_INSTRUCTIONS = """
 # AWS Security Agent MCP Server
 
-Comprehensive MCP server for AWS Security Agent — security scanning, penetration testing, and remediation.
+Comprehensive MCP server for AWS Security Agent — security scanning and penetration testing.
 
 ## Available Tools
 
@@ -32,13 +32,9 @@ Comprehensive MCP server for AWS Security Agent — security scanning, penetrati
 ### Code Review (orchestrated)
 - `start_security_scan` — Zip code, upload to S3, create code review, start scan. Returns scan_id.
 - `get_scan_status` — Poll scan progress
-- `get_scan_findings` — Get vulnerabilities found
+- `get_scan_findings` — Get vulnerabilities found (includes remediation guidance and code locations)
 - `list_scans` — List tracked scans
 - `stop_scan` — Cancel a running scan
-
-### Remediation
-- `start_remediation` — Generate code fixes for findings
-- `get_remediation_diff` — Download fix diffs to apply locally
 
 ### Full API Access
 - `call_api` — Call ANY SecurityAgent API operation (pentests, target domains, integrations, artifacts, etc.)
@@ -50,8 +46,8 @@ Comprehensive MCP server for AWS Security Agent — security scanning, penetrati
 1. `setup_check` → `setup` (one-time)
 2. `start_security_scan(path=".")` → returns scan_id
 3. Poll with `get_scan_status` until COMPLETED
-4. `get_scan_findings` → view results
-5. `get_remediation_diff` → download fixes
+4. `get_scan_findings` → view results with remediation guidance
+5. Apply fixes based on `remediationCode` and `codeLocations` in findings
 
 ### Penetration Test
 1. `setup_check` → `setup` (one-time)

@@ -122,7 +122,7 @@ class TestIntegScanFlow:
         })
 
         result = await start_security_scan(
-            mock_context, path='/app', title='pre-cr-main', remediation='AUTOMATIC'
+            mock_context, path='/app', title='pre-cr-main'
         )
         assert 'scan-abc123' in result
         assert 'STARTED' in result
@@ -165,43 +165,9 @@ class TestIntegScanFlow:
         mock_state.get_config.return_value = {'agent_space_id': 'as-1'}  # missing role and bucket
 
         result = await start_security_scan(
-            mock_context, path='.', title='test', remediation='AUTOMATIC'
+            mock_context, path='.', title='test'
         )
         assert 'error' in result
         assert 'Not configured' in result
 
 
-class TestIntegRemediationFlow:
-    """Integration tests for the remediation flow."""
-
-    @pytest.mark.asyncio
-    @patch('awslabs.security_agent_mcp_server.server._scanner')
-    async def test_remediation_and_diff(self, mock_scanner, mock_context):
-        """Test starting remediation and getting diff."""
-        from awslabs.security_agent_mcp_server.server import get_remediation_diff, start_remediation
-
-        # Start remediation
-        mock_scanner.start_remediation = AsyncMock(return_value={
-            'status': 'STARTED',
-            'finding_ids': ['f-1', 'f-2'],
-        })
-
-        result = await start_remediation(
-            mock_context, scan_id='scan-abc', finding_ids=['f-1', 'f-2']
-        )
-        assert 'STARTED' in result
-
-        # Get diff
-        mock_scanner.get_remediation_diff = AsyncMock(return_value={
-            'diffs': [
-                {
-                    'finding_id': 'f-1',
-                    'file_path': 'src/db/users.py',
-                    'diff': '--- a/src/db/users.py\n+++ b/src/db/users.py\n@@ -42,3 +42,3 @@\n-    query = f"SELECT * FROM users WHERE id = {user_id}"\n+    query = "SELECT * FROM users WHERE id = %s"\n',
-                },
-            ],
-        })
-
-        result = await get_remediation_diff(mock_context, scan_id='scan-abc', finding_id='f-1')
-        assert 'diffs' in result
-        assert 'src/db/users.py' in result

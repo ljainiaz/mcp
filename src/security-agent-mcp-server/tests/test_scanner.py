@@ -36,6 +36,21 @@ def mock_client():
             {'findingId': 'f-1', 'title': 'SQL Injection', 'riskLevel': 'CRITICAL'}
         ]
     })
+    client.batch_get_findings = MagicMock(return_value={
+        'findings': [
+            {
+                'findingId': 'f-1',
+                'name': 'SQL Injection',
+                'description': 'SQL injection vulnerability',
+                'riskLevel': 'CRITICAL',
+                'riskType': 'SQL_INJECTION',
+                'confidence': 'HIGH',
+                'status': 'ACTIVE',
+                'remediationCode': 'Use parameterized queries',
+                'codeLocations': [{'filePath': 'app.py', 'lineStart': 10, 'lineEnd': 15}],
+            }
+        ]
+    })
     client.stop_code_review_job = MagicMock(return_value={})
     return client
 
@@ -150,7 +165,8 @@ class TestScanner:
         })
         findings = await scanner.get_findings('scan-test')
         assert findings['total_findings'] == 1
-        assert findings['findings'][0]['title'] == 'SQL Injection'
+        assert findings['findings'][0]['name'] == 'SQL Injection'
+        assert findings['findings'][0]['remediationCode'] == 'Use parameterized queries'
 
     @pytest.mark.asyncio
     async def test_get_findings_no_scan(self, mock_client, mock_state):

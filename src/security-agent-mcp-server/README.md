@@ -3,7 +3,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-yellow.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-An AWS Labs Model Context Protocol (MCP) server for **AWS Security Agent** — automated security scanning, penetration testing, and remediation.
+An AWS Labs Model Context Protocol (MCP) server for **AWS Security Agent** — automated security scanning and penetration testing.
 
 This MCP server provides full access to the AWS Security Agent service, enabling developers to scan source code for vulnerabilities, run penetration tests against live applications, manage integrations, and apply auto-generated fixes — all from any MCP-compatible client.
 
@@ -13,7 +13,6 @@ This MCP server provides full access to the AWS Security Agent service, enabling
 - **Penetration testing** — test live applications via target domains
 - **Full API access** — `call_api` tool exposes all SecurityAgent operations
 - **Auto-provisioning** — creates agent space and IAM service role on first use
-- **Code remediation** — auto-generates fixes for vulnerabilities, returns diffs
 - **Respects .gitignore** — excludes ignored files from packaging
 
 ## Prerequisites
@@ -97,8 +96,6 @@ See [AWS documentation](https://docs.aws.amazon.com/securityagent/latest/usergui
 
 | Tool | Description |
 |------|-------------|
-| `start_remediation` | Generate code fixes for findings |
-| `get_remediation_diff` | Download fix diffs to apply locally |
 
 ### Full API Access
 
@@ -114,10 +111,9 @@ See [AWS documentation](https://docs.aws.amazon.com/securityagent/latest/usergui
 ```
 1. setup_check()              → verify readiness
 2. setup()                    → provision resources (one-time)
-3. start_security_scan(path=".", remediation="AUTOMATIC")
+3. start_security_scan(path=".")
 4. get_scan_status()          → poll until COMPLETED
 5. get_scan_findings()        → retrieve findings
-6. get_remediation_diff()     → download code fixes
 ```
 
 ### Penetration Test

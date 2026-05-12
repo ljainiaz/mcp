@@ -53,16 +53,14 @@ EXCLUDE_FILES = {
 
 
 class Scanner:
-    """Orchestrates code packaging, scan execution, and remediation."""
+    """Orchestrates code packaging, scan execution, and findings retrieval."""
 
     def __init__(self, client: SecurityAgentClient, state: StateManager):
         """Initialize Scanner with API client and state manager."""
         self._client = client
         self._state = state
 
-    async def start_scan(
-        self, path: str = '.', title: Optional[str] = None, remediation: str = 'AUTOMATIC'
-    ) -> dict:
+    async def start_scan(self, path: str = '.', title: Optional[str] = None) -> dict:
         """Package code, upload to S3, and start a security scan."""
         config = self._state.get_config()
         agent_space_id = config['agent_space_id']
@@ -95,7 +93,6 @@ class Scanner:
             title=title,
             service_role=service_role,
             s3_url=s3_url,
-            code_remediation_strategy=remediation,
         )
         code_review_id = cr_result['codeReviewId']
 
@@ -128,7 +125,7 @@ class Scanner:
             'job_id': job_id,
             'status': 'STARTED',
             'title': title,
-            'message': "Security scan started. Takes ~15-30 min. Ask 'scan status' anytime.",
+            'message': 'Security scan started. Use get_scan_status to check progress.',
         }
 
     async def get_status(self, scan_id: Optional[str] = None) -> dict:
@@ -185,7 +182,7 @@ class Scanner:
             agent_space_id=scan['agent_space_id'],
             code_review_job_id=scan['job_id'],
         )
-        findings = result.get('findingsSummaries', [])
+        findings_summaries = result.get('findingsSummaries', [])
 
         if severity:
             severity_order = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFORMATIONAL']
@@ -193,7 +190,32 @@ class Scanner:
             if severity_upper in severity_order:
                 min_idx = severity_order.index(severity_upper)
                 allowed = set(severity_order[: min_idx + 1])
-                findings = [f for f in findings if f.get('riskLevel', '').upper() in allowed]
+                findings_summaries = [
+                    f for f in findings_summaries if f.get('riskLevel', '').upper() in allowed
+                ]
+
+        # Batch get full details (including remediationCode and codeLocations)
+        finding_ids = [f['findingId'] for f in findings_summaries]
+        findings = []
+        if finding_ids:
+            batch_result = self._client.batch_get_findings(
+                agent_space_id=scan['agent_space_id'],
+                finding_ids=finding_ids,
+            )
+            findings = [
+                {
+                    'findingId': f.get('findingId'),
+                    'name': f.get('name'),
+                    'description': f.get('description'),
+                    'riskLevel': f.get('riskLevel'),
+                    'riskType': f.get('riskType'),
+                    'confidence': f.get('confidence'),
+                    'status': f.get('status'),
+                    'remediationCode': f.get('remediationCode'),
+                    'codeLocations': f.get('codeLocations'),
+                }
+                for f in batch_result.get('findings', [])
+            ]
 
         return {
             'scan_id': scan['scan_id'],
@@ -215,119 +237,6 @@ class Scanner:
         scan['status'] = 'STOPPED'
         self._state.save_scan(scan['scan_id'], scan)
         return {'scan_id': scan['scan_id'], 'status': 'STOPPED'}
-
-    async def start_remediation(
-        self, scan_id: Optional[str] = None, finding_ids: Optional[list[str]] = None
-    ) -> dict:
-        """Start code remediation for specific findings."""
-        scan = self._state.get_scan(scan_id)
-        if not scan:
-            return {'error': 'No scan found.'}
-
-        # If no finding_ids, get all from the scan
-        if not finding_ids:
-            result = self._client.list_findings(
-                agent_space_id=scan['agent_space_id'],
-                code_review_job_id=scan['job_id'],
-            )
-            findings = result.get('findingsSummaries', [])
-            finding_ids = [f['findingId'] for f in findings]
-
-        if not finding_ids:
-            return {'error': 'No findings to remediate.'}
-
-        self._client.start_code_remediation(
-            agent_space_id=scan['agent_space_id'],
-            job_id=scan['job_id'],
-            finding_ids=finding_ids,
-        )
-
-        return {
-            'status': 'REMEDIATION_STARTED',
-            'finding_count': len(finding_ids),
-            'finding_ids': finding_ids,
-            'message': 'Code remediation started. Poll with get_remediation_diff to get fixes when ready.',
-        }
-
-    async def get_remediation_diff(
-        self, scan_id: Optional[str] = None, finding_id: Optional[str] = None
-    ) -> dict:
-        """Download remediation diffs for findings."""
-        scan = self._state.get_scan(scan_id)
-        if not scan:
-            return {'error': 'No scan found.'}
-
-        # Get finding with remediation details
-        if not finding_id:
-            # Get all findings and find one with completed remediation
-            result = self._client.list_findings(
-                agent_space_id=scan['agent_space_id'],
-                code_review_job_id=scan['job_id'],
-            )
-            finding_ids = [f['findingId'] for f in result.get('findingsSummaries', [])]
-        else:
-            finding_ids = [finding_id]
-
-        if not finding_ids:
-            return {'error': 'No findings found.'}
-
-        result = self._client.batch_get_findings(
-            agent_space_id=scan['agent_space_id'],
-            finding_ids=finding_ids,
-        )
-
-        diffs = []
-        pending = []
-        for finding in result.get('findings', []):
-            remediation = finding.get('codeRemediationTask', {})
-            status = remediation.get('status')
-
-            if status == 'COMPLETED':
-                for detail in remediation.get('taskDetails', []):
-                    diff_link = detail.get('codeDiffLink')
-                    if diff_link:
-                        try:
-                            diff_content = self._client.download_url(diff_link)
-                            diffs.append(
-                                {
-                                    'finding_id': finding['findingId'],
-                                    'finding_name': finding.get('name', ''),
-                                    'diff': diff_content,
-                                }
-                            )
-                        except Exception as e:
-                            diffs.append(
-                                {
-                                    'finding_id': finding['findingId'],
-                                    'finding_name': finding.get('name', ''),
-                                    'error': f'Failed to download diff: {e}',
-                                }
-                            )
-            elif status == 'IN_PROGRESS':
-                pending.append(
-                    {
-                        'finding_id': finding['findingId'],
-                        'name': finding.get('name', ''),
-                        'status': 'IN_PROGRESS',
-                    }
-                )
-            elif status == 'FAILED':
-                pending.append(
-                    {
-                        'finding_id': finding['findingId'],
-                        'name': finding.get('name', ''),
-                        'status': 'FAILED',
-                        'reason': remediation.get('statusReason', ''),
-                    }
-                )
-
-        return {
-            'scan_id': scan['scan_id'],
-            'diffs_ready': len(diffs),
-            'pending': len(pending),
-            'diffs': diffs,
-            'pending_details': pending,
-        }
 
     def _zip_code(self, path: str) -> str:
         root = Path(path).resolve()

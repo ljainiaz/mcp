@@ -31,8 +31,7 @@ def test_server_has_expected_tools():
         'get_scan_findings',
         'list_scans',
         'stop_scan',
-        'start_remediation',
-        'get_remediation_diff',
+
         'call_api',
         'get_api_guide',
     }
@@ -52,7 +51,7 @@ def test_server_has_instructions():
 
 def test_server_tool_count():
     """Verify correct number of tools."""
-    assert len(mcp._tool_manager._tools) == 11
+    assert len(mcp._tool_manager._tools) == 9
 
 
 class TestSetupCheck:
@@ -243,7 +242,7 @@ class TestStartSecurityScan:
 
         from awslabs.security_agent_mcp_server.server import start_security_scan
 
-        result = await start_security_scan(ctx, path='.', title='test', remediation='AUTOMATIC')
+        result = await start_security_scan(ctx, path='.', title='test')
         mock_client.create_s3_bucket.assert_called_once()
         assert 'scan-1' in result
 
@@ -265,7 +264,7 @@ class TestStartSecurityScan:
 
         from awslabs.security_agent_mcp_server.server import start_security_scan
 
-        result = await start_security_scan(ctx, path='.', title='test', remediation='AUTOMATIC')
+        result = await start_security_scan(ctx, path='.', title='test')
         assert 'scan-1' in result
 
     @pytest.mark.asyncio
@@ -278,6 +277,6 @@ class TestStartSecurityScan:
 
         from awslabs.security_agent_mcp_server.server import start_security_scan
 
-        result = await start_security_scan(ctx, path='.', title='test', remediation='AUTOMATIC')
+        result = await start_security_scan(ctx, path='.', title='test')
         assert 'error' in result
         assert 'Not configured' in result
