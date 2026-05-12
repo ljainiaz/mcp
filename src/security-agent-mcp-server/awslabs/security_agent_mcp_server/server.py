@@ -15,6 +15,14 @@
 """AWS Security Agent MCP Server implementation."""
 
 import json
+from datetime import datetime
+
+
+def _json_serial(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
 import os
 import sys
 from awslabs.security_agent_mcp_server.aws_client import SecurityAgentClient
@@ -84,7 +92,7 @@ async def setup_check(ctx: Context) -> str:
                 pass
 
         logger.info(f'Setup check: ready={result["ready"]}')
-        return json.dumps(result)
+        return json.dumps(result, default=_json_serial)
     except Exception as e:
         logger.error(f'Error in setup_check: {e}')
         await ctx.error(f'Error checking setup: {e}')
@@ -209,7 +217,7 @@ async def start_security_scan(
     try:
         config = _state.get_config()
         if not config.get('agent_space_id') or not config.get('service_role'):
-            return json.dumps({'error': 'Not configured. Run setup first.'})
+            return json.dumps({'error': 'Not configured. Run setup first.'}, default=_json_serial)
 
         # Lazy S3 bucket creation on first scan
         if not config.get('s3_bucket'):
@@ -230,7 +238,7 @@ async def start_security_scan(
 
         logger.info(f'Starting security scan on path: {path}')
         result = await _scanner.start_scan(path=path, title=title)
-        return json.dumps(result)
+        return json.dumps(result, default=_json_serial)
     except Exception as e:
         logger.error(f'Error in start_security_scan: {e}')
         await ctx.error(f'Scan failed: {e}')
@@ -251,7 +259,7 @@ async def get_scan_status(
     a scan completed after session recovery.
     """
     try:
-        return json.dumps(await _scanner.get_status(scan_id=scan_id))
+        return json.dumps(await _scanner.get_status(scan_id=scan_id), default=_json_serial)
     except Exception as e:
         logger.error(f'Error in get_scan_status: {e}')
         await ctx.error(f'Error checking status: {e}')
@@ -275,7 +283,7 @@ async def get_scan_findings(
     Returns findings with title, severity, confidence, file location, and description.
     """
     try:
-        return json.dumps(await _scanner.get_findings(scan_id=scan_id, severity=severity))
+        return json.dumps(await _scanner.get_findings(scan_id=scan_id, severity=severity), default=_json_serial)
     except Exception as e:
         logger.error(f'Error in get_scan_findings: {e}')
         await ctx.error(f'Error getting findings: {e}')
@@ -286,7 +294,7 @@ async def get_scan_findings(
 async def list_scans(ctx: Context) -> str:
     """List all recent security scans tracked locally with their status."""
     try:
-        return json.dumps({'scans': _state.list_scans()})
+        return json.dumps({'scans': _state.list_scans()}, default=_json_serial)
     except Exception as e:
         logger.error(f'Error in list_scans: {e}')
         await ctx.error(f'Error listing scans: {e}')
@@ -301,7 +309,7 @@ async def stop_scan(
     """Stop a running security scan."""
     try:
         logger.info(f'Stopping scan: {scan_id}')
-        return json.dumps(await _scanner.stop_scan(scan_id=scan_id))
+        return json.dumps(await _scanner.stop_scan(scan_id=scan_id), default=_json_serial)
     except Exception as e:
         logger.error(f'Error in stop_scan: {e}')
         await ctx.error(f'Error stopping scan: {e}')
@@ -328,10 +336,10 @@ async def call_api(
         import re
 
         if not re.match(r'^[A-Za-z]+$', operation):
-            return json.dumps({'error': f'Invalid operation name: {operation}'})
+            return json.dumps({'error': f'Invalid operation name: {operation}'}, default=_json_serial)
         logger.info(f'call_api: {operation}')
         result = _client.call(operation, params)
-        return json.dumps(result)
+        return json.dumps(result, default=_json_serial)
     except Exception as e:
         logger.error(f'Error in call_api ({operation}): {e}')
         await ctx.error(f'{operation} failed: {e}')
