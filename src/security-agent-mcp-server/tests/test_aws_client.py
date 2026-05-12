@@ -122,7 +122,3 @@ class TestSecurityAgentClient:
         with pytest.raises(ValueError, match='Invalid operation'):
             client.call('../evil', {})
 
-    def test_download_url_rejects_non_aws(self):
-        client = SecurityAgentClient()
-        with pytest.raises(ValueError, match='non-AWS domain'):
-            client.download_url('https://evil.com/file')

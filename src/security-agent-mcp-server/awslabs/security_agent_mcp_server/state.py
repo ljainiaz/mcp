@@ -108,6 +108,19 @@ class StateManager:
         scans = self._load_scans()
         return sorted(scans.values(), key=lambda s: s.get('started_at', ''), reverse=True)
 
+    def get_code_review_id(self, workspace_path: str) -> Optional[str]:
+        """Get stored code review ID for a workspace path."""
+        config = self.get_config()
+        code_reviews = config.get('code_reviews', {})
+        return code_reviews.get(workspace_path)
+
+    def set_code_review_id(self, workspace_path: str, code_review_id: str) -> None:
+        """Store code review ID for a workspace path."""
+        config = self.get_config()
+        code_reviews = config.get('code_reviews', {})
+        code_reviews[workspace_path] = code_review_id
+        self.update_config(code_reviews=code_reviews)
+
     def clear(self) -> None:
         """Clear all local configuration and scan state."""
         if CONFIG_FILE.exists():

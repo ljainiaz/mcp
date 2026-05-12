@@ -21,6 +21,7 @@ import uuid
 import zipfile
 from awslabs.security_agent_mcp_server.aws_client import SecurityAgentClient
 from awslabs.security_agent_mcp_server.state import StateManager
+from botocore.exceptions import ClientError
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -61,12 +62,17 @@ class Scanner:
         self._state = state
 
     async def start_scan(self, path: str = '.', title: Optional[str] = None) -> dict:
-        """Package code, upload to S3, and start a security scan."""
+        """Package code, upload to S3, and start a security scan.
+
+        Reuses an existing CodeReview for the same workspace path if one exists.
+        Only creates a new CodeReview on first scan of a workspace.
+        """
         config = self._state.get_config()
         agent_space_id = config['agent_space_id']
         service_role = config['service_role']
         s3_bucket = config['s3_bucket']
 
+        abs_path = os.path.abspath(path)
         scan_id = f'scan-{uuid.uuid4().hex[:8]}'
         title = title or f'pre-cr-{datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")}'
 
@@ -87,20 +93,40 @@ class Scanner:
             if os.path.exists(zip_path):
                 os.unlink(zip_path)
 
-        # 3. Create code review
-        cr_result = self._client.create_code_review(
-            agent_space_id=agent_space_id,
-            title=title,
-            service_role=service_role,
-            s3_url=s3_url,
-        )
-        code_review_id = cr_result['codeReviewId']
+        # 3. Get or create code review for this workspace
+        code_review_id = self._state.get_code_review_id(abs_path)
+        if not code_review_id:
+            cr_result = self._client.create_code_review(
+                agent_space_id=agent_space_id,
+                title=title,
+                service_role=service_role,
+                s3_url=s3_url,
+            )
+            code_review_id = cr_result['codeReviewId']
+            self._state.set_code_review_id(abs_path, code_review_id)
 
-        # 4. Start code review job
-        job_result = self._client.start_code_review_job(
-            agent_space_id=agent_space_id,
-            code_review_id=code_review_id,
-        )
+        # 4. Start code review job (recreate if code review was deleted externally)
+        try:
+            job_result = self._client.start_code_review_job(
+                agent_space_id=agent_space_id,
+                code_review_id=code_review_id,
+            )
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ResourceNotFoundException':
+                cr_result = self._client.create_code_review(
+                    agent_space_id=agent_space_id,
+                    title=title,
+                    service_role=service_role,
+                    s3_url=s3_url,
+                )
+                code_review_id = cr_result['codeReviewId']
+                self._state.set_code_review_id(abs_path, code_review_id)
+                job_result = self._client.start_code_review_job(
+                    agent_space_id=agent_space_id,
+                    code_review_id=code_review_id,
+                )
+            else:
+                raise
         job_id = job_result['codeReviewJobId']
 
         # 5. Save state
@@ -113,7 +139,7 @@ class Scanner:
                 'agent_space_id': agent_space_id,
                 'status': 'IN_PROGRESS',
                 'title': title,
-                'path': os.path.abspath(path),
+                'path': abs_path,
                 'started_at': datetime.now(timezone.utc).isoformat(),
                 'zip_size_bytes': zip_size,
             },

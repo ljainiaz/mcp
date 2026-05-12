@@ -109,6 +109,10 @@ async def setup(
 ) -> str:
     """One-time setup: provision or reuse agent space and IAM service role.
 
+    NOTE: This creates a minimal role for code scanning and basic pentesting (S3 read + CloudWatch Logs).
+    For advanced use cases (VPC-based pentests, custom networking, broader AWS resource access),
+    configure the agent space and role via the AWS Security Agent console instead.
+
     IMPORTANT: Before calling, ask the user:
     1. "Do you have an existing agent space, or should I create a new one?"
        (setup_check returns existing_agent_spaces if any exist — show them)

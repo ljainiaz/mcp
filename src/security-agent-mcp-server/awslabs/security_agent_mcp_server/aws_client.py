@@ -17,9 +17,7 @@
 import boto3
 import json
 import re
-import urllib.request
 from typing import Any, Optional
-from urllib.parse import urlparse
 
 
 class SecurityAgentClient:
@@ -213,8 +211,8 @@ class SecurityAgentClient:
                         'Effect': 'Allow',
                         'Action': ['s3:GetObject', 's3:GetObjectVersion', 's3:ListBucket'],
                         'Resource': [
-                            f'arn:aws:s3:::security-agent-scans-{account_id}-*',
-                            f'arn:aws:s3:::security-agent-scans-{account_id}-*/*',
+                            f'arn:aws:s3:::security-agent-scans-{account_id}-{self.region}-*',
+                            f'arn:aws:s3:::security-agent-scans-{account_id}-{self.region}-*/*',
                         ],
                     },
                     {
@@ -243,13 +241,3 @@ class SecurityAgentClient:
         """Upload a file to S3."""
         self._get_session().client('s3').upload_file(file_path, bucket, key)
         return f's3://{bucket}/{key}'
-
-    def download_url(self, url: str) -> str:
-        """Download content from a presigned S3 URL."""
-        parsed = urlparse(url)
-        host = parsed.hostname or ''
-        if not (host.endswith('.amazonaws.com') or host.endswith('.s3.aws')):
-            raise ValueError(f'Refusing to download from non-AWS domain: {parsed.hostname}')
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            return resp.read().decode('utf-8')

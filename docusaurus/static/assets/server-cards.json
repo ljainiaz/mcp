@@ -644,6 +644,7 @@
         "security",
         "code-review",
         "scanning",
+        "pentest",
         "remediation",
         "agentic"
       ],
