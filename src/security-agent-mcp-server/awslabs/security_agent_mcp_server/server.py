@@ -236,6 +236,19 @@ async def start_security_scan(
                     raise
             _state.update_config(s3_bucket=s3_bucket)
 
+            # Register bucket on agent space so service can access it
+            agent_space_id = config['agent_space_id']
+            space = _client.get_agent_space(agent_space_id)
+            existing_buckets = space.get('awsResources', {}).get('s3Buckets', [])
+            if s3_bucket not in existing_buckets:
+                existing_buckets.append(s3_bucket)
+                _client.update_agent_space(
+                    agent_space_id,
+                    space.get('name', 'security-scans'),
+                    space.get('awsResources', {}).get('iamRoles', []),
+                    existing_buckets,
+                )
+
         logger.info(f'Starting security scan on path: {path}')
         result = await _scanner.start_scan(path=path, title=title)
         return json.dumps(result, default=_json_serial)
